@@ -1,0 +1,340 @@
+___________________________________________________________________________
+
+# IMPORT PACAKAGES AND DATA
+___________________________________________________________________________
+
+# Import packages
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
+from sklearn.model_selection import cross_val_score
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn import metrics
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.naive_bayes import GaussianNB
+from sklearn.metrics import matthews_corrcoef
+import xgboost as xgb
+from sklearn.model_selection import RandomizedSearchCV
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import make_scorer
+from sklearn.feature_selection import SelectKBest, f_classif
+
+# Import data 2018-2019
+data = pd.read_csv('2018-2019.csv')
+data = data.iloc[:, 0:215]
+___________________________________________________________________________
+
+# FEATURE ENGINEERING
+___________________________________________________________________________
+
+# Create dataset and drop unnecessary columns
+data = data.drop(['id', 'date_of_first_mail', 'durationT0', 'EC1yr', 'GPAjaar1', 'earlydropout', 'number_of_words_part1', 'number_of_words_part2', 'nationality'], axis = 1)
+data = data.drop(data.iloc[:, 5:180], axis = 1)
+data.head()
+
+# Remove 2e jr, propstop 2017 values and row
+data = data[data.BSA != '2e jr, propstop 2017']
+
+# Change number_of_words to numeric values and fill NA's with 0
+data['total_number_of_words'] = pd.to_numeric(data['total_number_of_words'], errors='coerce')
+data['total_number_of_words'] = data['total_number_of_words'].fillna(0)
+
+# Change gender column from integer to category type
+data['gender'] = data['gender'].astype('category')
+
+# Change age_at_start_programme column to numerical value
+data['age_at_start_programme'] = pd.to_numeric(data['age_at_start_programme'], errors='coerce')
+
+# Replace values of Dropout column
+data['Dropout'] = data['BSA']
+data['Dropout'] = data['Dropout'].replace(['Early dropout','NBSA'],'Yes')
+data['Dropout'] = data['Dropout'].replace(['Postponed advice', 'PBSA'],'No')
+data.head()
+
+# Drop BSA column
+data = data.drop(['BSA'], axis = 1)
+
+# One hot encoding by using pandas get_dummies 
+data = pd.get_dummies(data)
+data = data.drop(['Dropout_No'], axis = 1)
+data = data.loc[:, data.columns!='Etniciteit_Westers Allochtoon']
+data = data.loc[:, data.columns!='nationality_SURI']
+data = data.loc[:, data.columns!='gender_2']
+data.rename(columns = {'gender_1':'gender_male'}, inplace = True)
+data.rename(columns = {'Etniciteit_Autochtoon':'Ethnicity_Native'}, inplace = True)
+data.rename(columns = {'Etniciteit_Niet-Westers Allochtoon':'Ethnicity_Non-Western'}, inplace = True)
+
+# Drop missing values
+data = data.dropna()
+___________________________________________________________________________
+
+# CREATE X AND Y VARIABLES
+___________________________________________________________________________
+
+# Create X and Y variables
+X = data.iloc[:, data.columns != 'Dropout_Yes']
+Y = data.iloc[:, data.columns == 'Dropout_Yes']
+
+# Feature min max normalization
+X = (X - X.min()) / (X.max() - X.min())
+
+# SelectKBest
+selector = SelectKBest(score_func = f_classif, k=22)
+selector.fit_transform(X, Y.values.ravel())
+cols = selector.get_support(indices=True)
+X = X.iloc[:,cols]
+
+# Split data into a test and training set
+x_train,x_test,y_train,y_test=train_test_split(X,Y,test_size=0.2)
+X_train = pd.DataFrame(x_train)
+Y_train = pd.DataFrame(y_train)
+X_test = pd.DataFrame(x_test)
+Y_test = pd.DataFrame(y_test)
+
+___________________________________________________________________________
+
+# MODELLING, LOGISTIC REGRESSION
+___________________________________________________________________________
+
+# Logistic regression model
+logisticreg = LogisticRegression()
+logisticreg.fit(X_train, Y_train.values.ravel())
+
+recall_test = np.mean(cross_val_score(logisticreg, X_test, Y_test.values.ravel(), cv=5, scoring = 'recall')).round(4)
+precision_test = np.mean(cross_val_score(logisticreg, X_test, Y_test.values.ravel(), cv=5, scoring = 'precision')).round(4)
+f1_test = np.mean(cross_val_score(logisticreg, X_test, Y_test.values.ravel(), cv=5, scoring = 'f1')).round(4)
+mcc_test = np.mean(cross_val_score(logisticreg, X_test, Y_test.values.ravel(), cv=5, scoring = make_scorer(matthews_corrcoef))).round(4)
+
+recall_train = np.mean(cross_val_score(logisticreg, X_train, Y_train.values.ravel(), cv=5, scoring = 'recall')).round(4)
+precision_train = np.mean(cross_val_score(logisticreg, X_train, Y_train.values.ravel(), cv=5, scoring = 'precision')).round(4)
+f1_train = np.mean(cross_val_score(logisticreg, X_train, Y_train.values.ravel(), cv=5, scoring = 'f1')).round(4)
+mcc_train = np.mean(cross_val_score(logisticreg, X_train, Y_train.values.ravel(), cv=5, scoring = make_scorer(matthews_corrcoef))).round(4)
+
+print('Test data: Recall =', recall_test, ', Precision =', precision_test, ', F1 =', f1_test, ', MCC =', mcc_test)
+print('Train data: Recall =', recall_train, ', Precision =', precision_train, ', F1 =', f1_train, ', MCC =', mcc_train)
+
+# Confusion matrix
+predictions = logisticreg.predict(X_test)
+cm_lr = metrics.confusion_matrix(Y_test, predictions)
+
+plt.figure(figsize=(6,6))
+plt.imshow(cm_lr, interpolation='nearest', cmap='Pastel1')
+plt.title('Confusion matrix', size = 15)
+plt.colorbar()
+tick_marks = np.arange(2)
+plt.xticks(tick_marks, ["No dropout", "Dropout"], rotation=45, size = 10)
+plt.yticks(tick_marks, ["No dropout", "Dropout"], size = 10)
+plt.tight_layout()
+plt.ylabel('Actual label', size = 15)
+plt.xlabel('Predicted label', size = 15)
+width, height = cm_lr.shape
+for x in range(width):
+    for y in range(height):
+        plt.annotate(str(cm_lr[x][y]), xy=(y, x), 
+        horizontalalignment='center',
+        verticalalignment='center')
+
+# Feature importance
+importances_logreg = pd.DataFrame(data={
+    'Attribute': X_train.columns,
+    'Importance': logisticreg.coef_[0]
+})
+importances_logreg = importances_logreg.sort_values(by='Importance', ascending=False)
+plt.bar(x=importances_logreg['Attribute'], height=importances_logreg['Importance'], color='#e0f0b7')
+plt.title('Feature importances obtained from coefficients', size=20)
+plt.rcParams["figure.figsize"] = (2,4)
+plt.rcParams.update({'font.size': 15})
+plt.xticks(rotation='vertical')
+plt.show()        
+
+# Coefficient table of features
+coef_table = pd.DataFrame(list(X_train.columns)).copy()
+coef_table.insert(len(coef_table.columns),"Coefs",logisticreg.coef_.transpose())
+coef_table
+
+___________________________________________________________________________
+
+# MODELLING, RANDOM FOREST
+___________________________________________________________________________
+
+# Random Forest model
+randomforest = RandomForestClassifier(max_depth = 4, n_estimators = 300, max_features = 10, min_samples_leaf = 4, min_samples_split = 5)
+randomforest.fit(X_train, Y_train.values.ravel())
+
+recall_test = np.mean(cross_val_score(randomforest, X_test, Y_test.values.ravel(), cv=5, scoring = 'recall')).round(4)
+precision_test = np.mean(cross_val_score(randomforest, X_test, Y_test.values.ravel(), cv=5, scoring = 'precision')).round(4)
+f1_test = np.mean(cross_val_score(randomforest, X_test, Y_test.values.ravel(), cv=5, scoring = 'f1')).round(4)
+mcc_test = np.mean(cross_val_score(randomforest, X_test, Y_test.values.ravel(), cv=5, scoring = make_scorer(matthews_corrcoef))).round(4)
+
+recall_train = np.mean(cross_val_score(randomforest, X_train, Y_train.values.ravel(), cv=5, scoring = 'recall')).round(4)
+precision_train = np.mean(cross_val_score(randomforest, X_train, Y_train.values.ravel(), cv=5, scoring = 'precision')).round(4)
+f1_train = np.mean(cross_val_score(randomforest, X_train, Y_train.values.ravel(), cv=5, scoring = 'f1')).round(4)
+mcc_train = np.mean(cross_val_score(randomforest, X_train, Y_train.values.ravel(), cv=5, scoring = make_scorer(matthews_corrcoef))).round(4)
+
+print('Test data: Recall =', recall_test, ', Precision =', precision_test, ', F1 =', f1_test, ', MCC =', mcc_test)
+print('Train data: Recall =', recall_train, ', Precision =', precision_train, ', F1 =', f1_train, ', MCC =', mcc_train)
+
+# Confusion matrix
+predictions = randomforest.predict(X_test)
+cm_lr = metrics.confusion_matrix(Y_test, predictions)
+
+plt.figure(figsize=(6,6))
+plt.imshow(cm_lr, interpolation='nearest', cmap='Pastel1')
+plt.title('Confusion matrix', size = 15)
+plt.colorbar()
+tick_marks = np.arange(2)
+plt.xticks(tick_marks, ["No dropout", "Dropout"], rotation=45, size = 10)
+plt.yticks(tick_marks, ["No dropout", "Dropout"], size = 10)
+plt.tight_layout()
+plt.ylabel('Actual label', size = 15)
+plt.xlabel('Predicted label', size = 15)
+plt.rcParams.update({'font.size': 10})
+width, height = cm_lr.shape
+for x in range(width):
+    for y in range(height):
+        plt.annotate(str(cm_lr[x][y]), xy=(y, x), 
+        horizontalalignment='center',
+        verticalalignment='center')
+   
+# Feature importance
+importances_rf = pd.DataFrame(data={
+    'Attribute': X.columns,
+    'Importance': randomforest.feature_importances_
+})
+importances_rf = importances_rf.sort_values(by='Importance', ascending=False)
+plt.bar(x=importances_rf['Attribute'], height=importances_rf['Importance'], color='#e0f0b7')
+plt.title('Feature importances obtained from coefficients', size=20)
+plt.rcParams["figure.figsize"] = (25,10)
+plt.rcParams.update({'font.size': 14})
+plt.xticks(rotation='vertical')
+plt.show()
+
+# RandomizedSearchCV
+randomforest = RandomForestClassifier()
+params = [{'n_estimators': [50, 80, 100, 150, 200, 250, 300],
+         'max_depth': [1, 2, 4, 6, 8, 10],
+         'max_features': [5, 10, 15, 20],
+         'min_samples_leaf': [4, 10, 15, 20, 50, 80, 100],
+         'min_samples_split': [2, 5, 7, 10, 15, 20, 50, 80]}]
+
+random_search = RandomizedSearchCV(
+    randomforest, 
+    param_distributions=params,
+    n_iter=20, 
+    refit=True,
+    verbose=3,
+    scoring = make_scorer(matthews_corrcoef))
+
+random_search.fit(X_train, Y_train.values.ravel())
+random_search.best_params_
+
+# GridSearchCV
+params = [{'n_estimators': [30, 40, 50, 60, 90, 100],
+         'max_depth': [1, 2, 3, 4],
+         'max_features': [15, 17, 18, 19, 20],
+         'min_samples_leaf': [2, 3, 4, 5, 6, 7, 10],
+         'min_samples_split': [12, 14, 15, 18, 20]}]
+
+gs_randomforest = GridSearchCV(randomforest,
+                      param_grid=params,
+                      scoring='f1',
+                      cv=5)
+gs_randomforest.fit(X_train, Y_train.values.ravel())
+gs_randomforest.best_params_
+
+___________________________________________________________________________
+
+# MODELLING, XGBOOST
+___________________________________________________________________________
+
+# XGBoost model
+data_dmatrix = xgb.DMatrix(data=X,label=Y)
+xgboost = xgb.XGBClassifier(n_estimators = 300, max_depth = 6, max_leaves = 20, learning_rate = 0.06)
+xgboost.fit(X_train,Y_train)
+
+recall_test = np.mean(cross_val_score(xgboost, X_test, Y_test.values.ravel(), cv=5, scoring = 'recall')).round(4)
+precision_test = np.mean(cross_val_score(xgboost, X_test, Y_test.values.ravel(), cv=5, scoring = 'precision')).round(4)
+f1_test = np.mean(cross_val_score(xgboost, X_test, Y_test.values.ravel(), cv=5, scoring = 'f1')).round(4)
+mcc_test = np.mean(cross_val_score(xgboost, X_test, Y_test.values.ravel(), cv=5, scoring = make_scorer(matthews_corrcoef))).round(4)
+
+recall_train = np.mean(cross_val_score(xgboost, X_train, Y_train.values.ravel(), cv=5, scoring = 'recall')).round(4)
+precision_train = np.mean(cross_val_score(xgboost, X_train, Y_train.values.ravel(), cv=5, scoring = 'precision')).round(4)
+f1_train = np.mean(cross_val_score(xgboost, X_train, Y_train.values.ravel(), cv=5, scoring = 'f1')).round(4)
+mcc_train = np.mean(cross_val_score(xgboost, X_train, Y_train.values.ravel(), cv=5, scoring = make_scorer(matthews_corrcoef))).round(4)
+
+print('Test data: Recall =', recall_test, ', Precision =', precision_test, ', F1 =', f1_test, ', MCC =', mcc_test)
+print('Train data: Recall =', recall_train, ', Precision =', precision_train, ', F1 =', f1_train, ', MCC =', mcc_train)
+
+# Confusion matrix
+predictions = xgboost.predict(X_test)
+cm_lr = metrics.confusion_matrix(Y_test, predictions)
+
+plt.figure(figsize=(6,6))
+plt.imshow(cm_lr, interpolation='nearest', cmap='Pastel1')
+plt.title('Confusion matrix', size = 15)
+plt.colorbar()
+tick_marks = np.arange(2)
+plt.xticks(tick_marks, ["No dropout", "Dropout"], rotation=45, size = 10)
+plt.yticks(tick_marks, ["No dropout", "Dropout"], size = 10)
+plt.tight_layout()
+plt.ylabel('Actual label', size = 15)
+plt.xlabel('Predicted label', size = 15)
+width, height = cm_lr.shape
+for x in range(width):
+    for y in range(height):
+        plt.annotate(str(cm_lr[x][y]), xy=(y, x), 
+        horizontalalignment='center',
+        verticalalignment='center')
+
+# Feature importance
+importances_xg = pd.DataFrame(data={
+    'Attribute': X.columns,
+    'Importance': xgboost.feature_importances_
+})
+importances_xg = importances_xg.sort_values(by='Importance', ascending=False)
+plt.bar(x=importances_xg['Attribute'], height=importances_xg['Importance'], color='#e0f0b7')
+plt.title('Feature importances obtained from coefficients', size=20)
+plt.rcParams["figure.figsize"] = (25,10)
+plt.rcParams.update({'font.size': 10})
+plt.xticks(rotation='vertical')
+plt.show()
+
+# RandomizedSearchCV
+params = [{'xgboost__n_estimators': [50, 100, 150, 200, 250, 300],
+         'xgboost__max_depth': [1, 2, 4, 6, 8, 10],
+         'xgboost__max_leaves': [5, 15, 20, 30, 50, 100],
+         'xgboost__learning_rate': [0.05, 0.06, 0.08, 1.0, 1.2, 1.5, 1.8, 2.0, 3, 4]}]
+
+random_search = RandomizedSearchCV(
+    xgboost, 
+    param_distributions=params,
+    n_iter=20, 
+    refit=True,
+    verbose=3,
+    scoring = make_scorer(matthews_corrcoef))
+
+random_search.fit(X_train, Y_train)
+random_search.best_params_
+
+# GridSearchCV
+params = [{'xgboost__n_estimators': [100, 120, 130, 140, 150, 160, 170],
+         'xgboost__max_depth': [1, 5, 10, 12, 15],
+         'xgboost__max_leaves': [40, 45, 50, 55, 60],
+         'xgboost__learning_rate': [1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8]}]
+
+gs_xgboost = GridSearchCV(xgboost,
+                      param_grid=params,
+                      scoring='f1',
+                      cv=5)
+gs_xgboost.fit(X_train, Y_train)
+gs_xgboost.best_params_
+
+
+
+
+
+
+
+
